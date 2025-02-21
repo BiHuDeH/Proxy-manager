@@ -1,1 +1,43 @@
-
+{
+  "log": {
+    "level": "info"
+  },
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": [
+        "http-0",
+        "http-1",
+        "http-2"
+      ],
+      "default": "http-0"
+    },
+    {
+      "type": "http",
+      "server": "156.228.83.126",
+      "port": 3128,
+      "tag": "http-0"
+    },
+    {
+      "type": "http",
+      "server": "156.228.79.90",
+      "port": 3128,
+      "tag": "http-1"
+    },
+    {
+      "type": "http",
+      "server": "156.228.97.51",
+      "port": 3128,
+      "tag": "http-2"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ]
+}
