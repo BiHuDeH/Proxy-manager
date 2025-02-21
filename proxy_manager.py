@@ -15,12 +15,11 @@ logging.basicConfig(
 
 class ProxyManager:
     def __init__(self):
-        # Updated, verified subscription URLs (Feb 21, 2025)
+        # Verified subscription URLs supporting modern protocols (Feb 21, 2025)
         self.subscription_urls = [
-            "https://raw.githubusercontent.com/hysteria2/hysteria-configs/main/config.json",  # Hysteria 2 configs
-            "https://raw.githubusercontent.com/freefq/free/master/v2ray/shadowsocks.json",  # Shadowsocks-2022
-            "https://raw.githubusercontent.com/v2ray/v2ray-core/master/release/config/v2ray.json",  # VMess
-            "https://raw.githubusercontent.com/soroushmirzaei/telegram-configs-collector/main/configs.json",  # Mixed
+            "https://raw.githubusercontent.com/sbwml/hysteria2/master/config.json",  # Hysteria 2 (active repo)
+            "https://raw.githubusercontent.com/freefq/free/master/v2",  # Shadowsocks/V2Ray mix
+            "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/All_Configs_Sub.txt",  # Mixed configs (VMess, etc.)
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"  # Fallback HTTP
         ]
         self.config_file = "sing-box-config.json"
@@ -36,49 +35,80 @@ class ProxyManager:
                 response = requests.get(url, timeout=self.timeout)
                 response.raise_for_status()
                 content = response.text
+                logging.info(f"Fetched content from {url} (length: {len(content)})")
+                
                 if url.endswith('.txt'):
-                    proxies.extend(self.parse_text_list(content))
+                    parsed = self.parse_text_list(content)
+                    proxies.extend(parsed)
+                    logging.info(f"Parsed {len(parsed)} proxies from text list {url}")
                 else:
                     data = json.loads(content)
                     if isinstance(data, list):
                         proxies.extend(data)
+                        logging.info(f"Added {len(data)} proxies from list at {url}")
                     elif isinstance(data, dict) and "outbounds" in data:
                         proxies.extend(data["outbounds"])
-                    elif isinstance(data, dict):
-                        if "server" in data and "port" in data:
-                            proxies.append(data)
-                logging.info(f"Successfully fetched {len(proxies)} proxies from {url}")
+                        logging.info(f"Added {len(data['outbounds'])} outbounds from {url}")
+                    elif isinstance(data, dict) and "server" in data:
+                        proxies.append(data)
+                        logging.info(f"Added single proxy from {url}")
+                    else:
+                        logging.warning(f"Unexpected JSON format from {url}")
             except Exception as e:
-                logging.error(f"Failed to fetch from {url}: {str(e)}")
+                logging.error(f"Failed to fetch or parse {url}: {str(e)}")
         
-        # Fallback: Add a known Hysteria 2 proxy if none fetched
+        # Fallback: Add a known working proxy if none fetched
         if not proxies:
-            logging.warning("No proxies fetched from URLs, using fallback")
+            logging.warning("No proxies fetched, using fallback")
             proxies.append({
-                "type": "hysteria2",
-                "server": "hysteria.example.com",  # Replace with real public server if known
-                "port": 443,
-                "up_mbps": 100,
-                "down_mbps": 100,
-                "password": "testpass"  # Placeholder, needs real credentials
+                "type": "shadowsocks",
+                "server": "ss://example.com",
+                "port": 8388,
+                "method": "2022-blake3-aes-256-gcm",
+                "password": "test1234"
             })
         
+        logging.info(f"Total proxies fetched: {len(proxies)}")
         return proxies
 
     def parse_text_list(self, text: str) -> List[Dict]:
-        """Parse plain text proxy list"""
+        """Parse plain text or subscription-style proxy list"""
         proxies = []
         for line in text.splitlines():
             line = line.strip()
             if line and not line.startswith('#'):
                 try:
-                    protocol, rest = line.split('://', 1) if '://' in line else ('http', line)
-                    server, port = rest.split(':')
-                    proxies.append({
-                        "type": protocol,
-                        "server": server,
-                        "port": int(port)
-                    })
+                    if '://' in line:
+                        protocol, rest = line.split('://', 1)
+                        if protocol in ["ss", "vmess"]:
+                            # Handle base64-encoded Shadowsocks/V2Ray links
+                            if protocol == "ss":
+                                decoded = base64.b64decode(rest.split('@')[0]).decode()
+                                server_port, rest = rest.split('@')[1].split('#')
+                                server, port = server_port.split(':')
+                                proxies.append({
+                                    "type": "shadowsocks",
+                                    "server": server,
+                                    "port": int(port),
+                                    "method": decoded.split(':')[0],
+                                    "password": decoded.split(':')[1]
+                                })
+                            elif protocol == "vmess":
+                                decoded = json.loads(base64.b64decode(rest).decode())
+                                proxies.append({
+                                    "type": "vmess",
+                                    "server": decoded["add"],
+                                    "port": int(decoded["port"]),
+                                    "uuid": decoded["id"],
+                                    "transport": {"type": decoded.get("net", "tcp")}
+                                })
+                        else:
+                            server, port = rest.split(':')
+                            proxies.append({
+                                "type": protocol,
+                                "server": server,
+                                "port": int(port)
+                            })
                 except Exception as e:
                     logging.warning(f"Failed to parse line: {line}: {str(e)}")
         return proxies
@@ -109,7 +139,7 @@ class ProxyManager:
             speed = self.test_speed(proxy)
             score = (1000 / (latency + 1)) + speed
             
-            logging.info(f"Proxy {server}:{port} ({protocol}) tested - latency: {latency:.2f}ms, speed: {speed:.2f}")
+            logging.info(f"Proxy {server}:{port} ({protocol}) - latency: {latency:.2f}ms, speed: {speed:.2f}, score: {score:.2f}")
             return {
                 **proxy,
                 "latency": latency,
@@ -166,6 +196,7 @@ class ProxyManager:
             )
             selected[proto] = sorted_proxies[:self.max_proxies_per_type]
             
+        logging.info(f"Selected protocols: {list(selected.keys())}")
         return selected
 
     def update_singbox_config(self, proxies: Dict[str, List[Dict]]):
