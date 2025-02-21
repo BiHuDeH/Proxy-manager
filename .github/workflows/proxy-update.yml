@@ -2,8 +2,8 @@ name: Update Proxy Config
 
 on:
   schedule:
-    - cron: '0 */4 * * *' # Every 4 hours
-  workflow_dispatch: # Manual trigger option
+    - cron: '0 */4 * * *'  # Every 4 hours
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   update-proxies:
