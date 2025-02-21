@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
 import socket
 
+# Configure logging to track execution
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -15,16 +16,17 @@ logging.basicConfig(
 
 class ProxyManager:
     def __init__(self):
+        # Subscription URLs sourced from web and X searches (Feb 20, 2025)
         self.subscription_urls = [
             "https://raw.githubusercontent.com/mixool/hysteria/master/hysteria2.json",  # Hysteria 2
             "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/shadowsocks2022.json",  # Shadowsocks-2022
             "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/vmess_configs.json",  # V2Ray VMess
-            "https://raw.githubusercontent.com/soroushmirzaei/telegram-configs-collector/main/configs.json",  # Mixed (TUIC, Hysteria, etc.)
+            "https://raw.githubusercontent.com/soroushmirzaei/telegram-configs-collector/main/configs.json",  # Mixed protocols
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"  # Fallback HTTP proxies
         ]
         self.config_file = "sing-box-config.json"
-        self.max_proxies_per_type = 3
-        self.timeout = 5
+        self.max_proxies_per_type = 3  # Limit to 3 per protocol for variety
+        self.timeout = 5  # Seconds for connection tests
         
     def fetch_proxies(self) -> List[Dict]:
         """Fetch proxies from subscription URLs"""
@@ -49,7 +51,7 @@ class ProxyManager:
         return proxies
 
     def parse_text_list(self, text: str) -> List[Dict]:
-        """Parse plain text proxy list"""
+        """Parse plain text proxy list (e.g., HTTP proxies)"""
         proxies = []
         for line in text.splitlines():
             line = line.strip()
@@ -88,7 +90,7 @@ class ProxyManager:
                 
             latency = (time.time() - start_time) * 1000  # ms
             speed = self.test_speed(proxy)
-            score = (1000 / (latency + 1)) + speed
+            score = (1000 / (latency + 1)) + speed  # Higher score = better
             
             return {
                 **proxy,
@@ -103,7 +105,7 @@ class ProxyManager:
             return None
 
     def test_speed(self, proxy: Dict) -> float:
-        """Simplified speed test"""
+        """Simplified speed test based on connectivity"""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
@@ -111,7 +113,7 @@ class ProxyManager:
             result = sock.connect_ex((proxy["server"], proxy["port"]))
             sock.close()
             if result == 0:
-                return 1 / (time.time() - start)
+                return 1 / (time.time() - start)  # Rough MB/s estimate
             return 0
         except Exception:
             return 0
@@ -134,7 +136,7 @@ class ProxyManager:
             sorted_proxies = sorted(
                 plist,
                 key=lambda x: x["score"],
-                reverse=True
+                reverse=True  # Higher score = better
             )
             selected[proto] = sorted_proxies[:self.max_proxies_per_type]
             
@@ -178,6 +180,8 @@ class ProxyManager:
                         outbound["password"] = proxy.get("password", "")
                     elif protocol == "trojan":
                         outbound["password"] = proxy.get("password", "")
+                    elif protocol == "http":  # Handle HTTP proxies as fallback
+                        outbound["type"] = "http"
                     
                     config["outbounds"].append(outbound)
             
