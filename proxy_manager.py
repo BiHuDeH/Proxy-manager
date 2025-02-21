@@ -1,16 +1,12 @@
 import requests
 import json
 import time
-import subprocess
-import threading
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
 import socket
-import base64
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -19,41 +15,33 @@ logging.basicConfig(
 
 class ProxyManager:
     def __init__(self):
-        self.github_repos = [
-            "https://raw.githubusercontent.com/repo1/proxy-list/main/proxies.json",
-            "https://raw.githubusercontent.com/repo2/free-proxies/master/list.txt"
-        ]
-        self.custom_urls = [
-            "https://example.com/proxy-list",
-            "http://myproxies.local/list"
+        self.subscription_urls = [
+            "https://raw.githubusercontent.com/mixool/hysteria/master/hysteria2.json",  # Hysteria 2
+            "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/shadowsocks2022.json",  # Shadowsocks-2022
+            "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/vmess_configs.json",  # V2Ray VMess
+            "https://raw.githubusercontent.com/soroushmirzaei/telegram-configs-collector/main/configs.json",  # Mixed (TUIC, Hysteria, etc.)
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"  # Fallback HTTP proxies
         ]
         self.config_file = "sing-box-config.json"
-        self.max_proxies_per_type = 5
-        self.timeout = 5  # seconds
+        self.max_proxies_per_type = 3
+        self.timeout = 5
         
     def fetch_proxies(self) -> List[Dict]:
-        """Fetch proxies from all sources"""
+        """Fetch proxies from subscription URLs"""
         proxies = []
         
-        # Fetch from GitHub repositories
-        for url in self.github_repos:
+        for url in self.subscription_urls:
             try:
                 response = requests.get(url, timeout=self.timeout)
                 response.raise_for_status()
-                if url.endswith('.json'):
-                    proxies.extend(json.loads(response.text))
-                else:
+                if url.endswith('.txt'):
                     proxies.extend(self.parse_text_list(response.text))
-                logging.info(f"Successfully fetched proxies from {url}")
-            except Exception as e:
-                logging.error(f"Failed to fetch from {url}: {str(e)}")
-                
-        # Fetch from custom URLs
-        for url in self.custom_urls:
-            try:
-                response = requests.get(url, timeout=self.timeout)
-                response.raise_for_status()
-                proxies.extend(json.loads(response.text))
+                else:
+                    data = json.loads(response.text)
+                    if isinstance(data, list):
+                        proxies.extend(data)
+                    elif isinstance(data, dict) and "outbounds" in data:
+                        proxies.extend(data["outbounds"])
                 logging.info(f"Successfully fetched proxies from {url}")
             except Exception as e:
                 logging.error(f"Failed to fetch from {url}: {str(e)}")
@@ -67,18 +55,15 @@ class ProxyManager:
             line = line.strip()
             if line and not line.startswith('#'):
                 try:
-                    if '://' in line:
-                        protocol, rest = line.split('://', 1)
-                        proxies.append({
-                            "protocol": protocol,
-                            "server": rest.split(':')[0],
-                            "port": int(rest.split(':')[1])
-                        })
-                    elif len(line) > 50:
-                        decoded = base64.b64decode(line).decode()
-                        proxies.append(json.loads(decoded))
+                    protocol, rest = line.split('://', 1) if '://' in line else ('http', line)
+                    server, port = rest.split(':')
+                    proxies.append({
+                        "type": protocol,
+                        "server": server,
+                        "port": int(port)
+                    })
                 except Exception as e:
-                    logging.warning(f"Failed to parse line: {line}")
+                    logging.warning(f"Failed to parse line: {line}: {str(e)}")
         return proxies
 
     def test_proxy(self, proxy: Dict) -> Optional[Dict]:
@@ -86,7 +71,7 @@ class ProxyManager:
         start_time = time.time()
         
         try:
-            protocol = proxy.get("protocol", "").lower()
+            protocol = proxy.get("type", "").lower()
             server = proxy.get("server")
             port = proxy.get("port")
             
@@ -102,13 +87,14 @@ class ProxyManager:
                 return None
                 
             latency = (time.time() - start_time) * 1000  # ms
-            
             speed = self.test_speed(proxy)
+            score = (1000 / (latency + 1)) + speed
             
             return {
                 **proxy,
                 "latency": latency,
                 "speed": speed,
+                "score": score,
                 "last_tested": time.time()
             }
             
@@ -117,67 +103,28 @@ class ProxyManager:
             return None
 
     def test_speed(self, proxy: Dict) -> float:
-        """Test proxy speed (simplified)"""
-        protocol = proxy["protocol"].lower()
-        test_url = "http://speedtest.google.com/test"
-        
+        """Simplified speed test"""
         try:
-            if protocol in ["v2ray", "xray"]:
-                temp_config = self.generate_temp_config(proxy)
-                speed = self.measure_speed_with_singbox(temp_config, test_url)
-            elif protocol == "wireguard":
-                speed = self.measure_wireguard_speed(proxy)
-            else:
-                proxies = {protocol: f"{proxy['server']}:{proxy['port']}"}
-                start = time.time()
-                requests.get(test_url, proxies=proxies, timeout=self.timeout)
-                speed = 1 / (time.time() - start)
-                
-            return speed
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.timeout)
+            start = time.time()
+            result = sock.connect_ex((proxy["server"], proxy["port"]))
+            sock.close()
+            if result == 0:
+                return 1 / (time.time() - start)
+            return 0
         except Exception:
             return 0
-
-    def generate_temp_config(self, proxy: Dict) -> Dict:
-        """Generate temporary Sing-Box config for testing"""
-        return {
-            "outbounds": [{
-                "type": proxy["protocol"],
-                "server": proxy["server"],
-                "port": proxy["port"],
-            }]
-        }
-
-    def measure_speed_with_singbox(self, config: Dict, url: str) -> float:
-        """Measure speed using Sing-Box"""
-        with open("temp_config.json", "w") as f:
-            json.dump(config, f)
-        
-        start = time.time()
-        try:
-            subprocess.run(
-                ["sing-box", "run", "-c", "temp_config.json"],
-                timeout=self.timeout,
-                capture_output=True
-            )
-            return 1 / (time.time() - start)
-        except Exception:
-            return 0
-        finally:
-            os.remove("temp_config.json")
-
-    def measure_wireguard_speed(self, proxy: Dict) -> float:
-        # Placeholder - implement WireGuard-specific speed test if needed
-        return 0
 
     def select_best_proxies(self, proxies: List[Dict]) -> Dict[str, List[Dict]]:
-        """Select best proxies by protocol"""
+        """Select best proxies by protocol based on score"""
         tested_proxies = []
         with ThreadPoolExecutor(max_workers=20) as executor:
             tested_proxies = list(filter(None, executor.map(self.test_proxy, proxies)))
         
         by_protocol = {}
         for proxy in tested_proxies:
-            proto = proxy["protocol"].lower()
+            proto = proxy["type"].lower()
             if proto not in by_protocol:
                 by_protocol[proto] = []
             by_protocol[proto].append(proxy)
@@ -186,34 +133,58 @@ class ProxyManager:
         for proto, plist in by_protocol.items():
             sorted_proxies = sorted(
                 plist,
-                key=lambda x: (x["latency"], -x["speed"])
+                key=lambda x: x["score"],
+                reverse=True
             )
             selected[proto] = sorted_proxies[:self.max_proxies_per_type]
             
         return selected
 
     def update_singbox_config(self, proxies: Dict[str, List[Dict]]):
-        """Update Sing-Box configuration file"""
+        """Generate Sing-Box config with a selector"""
         try:
             config = {
                 "log": {"level": "info"},
-                "outbounds": []
+                "outbounds": [
+                    {
+                        "type": "selector",
+                        "tag": "proxy",
+                        "outbounds": [f"{proto}-{i}" for proto in proxies for i in range(len(proxies[proto]))],
+                        "default": "hysteria2-0" if "hysteria2" in proxies else list(proxies.keys())[0] + "-0"
+                    }
+                ]
             }
             
             for protocol, plist in proxies.items():
-                for proxy in plist:
+                for i, proxy in enumerate(plist):
                     outbound = {
                         "type": protocol,
                         "server": proxy["server"],
                         "port": proxy["port"],
-                        "tag": f"{protocol}-{proxy['server']}"
+                        "tag": f"{protocol}-{i}"
                     }
-                    if protocol == "wireguard":
-                        outbound["private_key"] = proxy.get("private_key", "")
-                    elif protocol in ["v2ray", "xray"]:
+                    if protocol == "hysteria2":
+                        outbound["up_mbps"] = proxy.get("up_mbps", 100)
+                        outbound["down_mbps"] = proxy.get("down_mbps", 100)
+                        outbound["password"] = proxy.get("password", "")
+                    elif protocol == "shadowsocks":
+                        outbound["method"] = proxy.get("method", "2022-blake3-aes-256-gcm")
+                        outbound["password"] = proxy.get("password", "")
+                    elif protocol == "vmess":
                         outbound["uuid"] = proxy.get("uuid", "")
+                        outbound["transport"] = proxy.get("transport", {"type": "grpc"})
+                    elif protocol == "tuic":
+                        outbound["uuid"] = proxy.get("uuid", "")
+                        outbound["password"] = proxy.get("password", "")
+                    elif protocol == "trojan":
+                        outbound["password"] = proxy.get("password", "")
                     
                     config["outbounds"].append(outbound)
+            
+            config["outbounds"].extend([
+                {"type": "direct", "tag": "direct"},
+                {"type": "block", "tag": "block"}
+            ])
             
             with open(self.config_file, "w") as f:
                 json.dump(config, f, indent=2)
