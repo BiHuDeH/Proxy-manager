@@ -15,20 +15,20 @@
     },
     {
       "type": "http",
-      "server": "156.228.83.126",
-      "port": 3128,
+      "server": "172.234.194.248",
+      "port": 1080,
       "tag": "http-0"
     },
     {
       "type": "http",
-      "server": "156.228.79.90",
+      "server": "3.12.144.146",
       "port": 3128,
       "tag": "http-1"
     },
     {
       "type": "http",
-      "server": "156.228.97.51",
-      "port": 3128,
+      "server": "18.223.25.15",
+      "port": 80,
       "tag": "http-2"
     },
     {
