@@ -4,32 +4,8 @@
   },
   "outbounds": [
     {
-      "type": "selector",
-      "tag": "proxy",
-      "outbounds": [
-        "http-0",
-        "http-1",
-        "http-2"
-      ],
-      "default": "http-0"
-    },
-    {
-      "type": "http",
-      "server": "172.234.194.248",
-      "port": 1080,
-      "tag": "http-0"
-    },
-    {
-      "type": "http",
-      "server": "3.12.144.146",
-      "port": 3128,
-      "tag": "http-1"
-    },
-    {
-      "type": "http",
-      "server": "18.223.25.15",
-      "port": 80,
-      "tag": "http-2"
+      "type": "direct",
+      "tag": "direct"
     },
     {
       "type": "direct",
